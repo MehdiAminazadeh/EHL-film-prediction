@@ -1,154 +1,137 @@
-# 🧪 EHL Film Prediction App
+# EHL Film Prediction
 
-A full-featured **Streamlit web application** for **data preprocessing, statistical analysis, and machine-learning modeling** of **EHL (Elastohydrodynamic Lubrication) film-thickness experiments**.
+This project is a Streamlit web application for exploring, cleaning, and modeling EHL (elastohydrodynamic lubrication) film-thickness data.
 
 It provides:
-- automated parsing and cleaning of raw TXT data  
-- statistical summaries, correlations, and outlier detection  
-- interactive ML regression modeling  
-- order-conditioned “deep-learning-style” group modeling  
-- ready-to-deploy Docker container
+- data upload and preprocessing
+- statistical analysis (summary, correlations, distributions, outlier detection)
+- classical machine learning models for film prediction
+- order-based (grouped) modeling
+- Docker support for reproducible deployment
 
-## 📁 Project Structure
-```
-EHL-Film-Prediction/
-│
-├── app.py                     # Main Streamlit entrypoint (Home / upload)
+## 1. Project Structure
+
+```text
+.
+├── app.py
 ├── pages/
-│   ├── 01_statistics.py       # Statistics dashboard
-│   ├── 02_machine_learning.py # ML modeling & evaluation
-│   ├── 03_deep_learning.py    # Order-grouped (DL-style) analysis
-│
-├── data_processor.py          # TXT parsing, merging, and cleanup
-├── preprocess.py              # Data normalization & imputation
-├── statistics.py              # Shared statistics logic
-├── models.py                  # ML model definitions & utilities
-├── ui_shared.py               # Navigation bar and UI helpers
-│
-├── requirements.txt           # Python dependencies
-├── Dockerfile                 # Docker container definition
-├── .dockerignore              # Ignored files during build
+│   ├── 01_statistics.py
+│   ├── 02_machine_learning.py
+│   └── 03_deep_learning.py
+├── data_processor.py
+├── preprocess.py
+├── statistics.py
+├── models.py
+├── ui_shared.py
+├── requirements.txt
+├── Dockerfile
 └── README.md
 ```
 
-## 🚀 Run Locally (without Docker)
+## 2. Prerequisites
+
+- Python 3.11 (recommended) or 3.10+
+- Git (if you clone the repository)
+- Docker (only if you want to run it in a container)
+
+## 3. Run on Local Machine (with virtual environment)
+
+### 3.1 Get the project
+
 ```bash
-git clone https://gitlab.com/<your-namespace>/<your-project>.git
-cd EHL-Film-Prediction
+git clone https://gitlab.com/your-namespace/ehl-film-prediction.git
+cd ehl-film-prediction
+```
+
+(If you already have the folder, just go into it.)
+
+### 3.2 Create a virtual environment
+
+**Linux / macOS:**
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+```
+
+**Windows (PowerShell):**
+
+```powershell
+python -m venv .venv
+.venv\Scripts\activate
+```
+
+You should now see `(.venv)` in your terminal prompt.
+
+### 3.3 Install dependencies
+
+```bash
+pip install --upgrade pip
 pip install -r requirements.txt
+```
+
+### 3.4 Start the application
+
+```bash
 streamlit run app.py
 ```
-Then open [http://localhost:8501](http://localhost:8501).
 
-## 🐳 Run with Docker
-### 1️⃣ Build the image
+Then open: http://localhost:8501
+
+If you want a different port:
+
+```bash
+streamlit run app.py --server.port=8502
+```
+
+## 4. Run with Docker
+
+This is useful when you want a clean, reproducible run without installing Python and dependencies on the host.
+
+### 4.1 Build the image
+
+Run this inside the project directory (where the Dockerfile is):
+
 ```bash
 docker build -t ehl-film-prediction:latest .
 ```
-For GitLab registry:
-```bash
-docker build -t registry.gitlab.com/<your-namespace>/<your-project>/ehl-film:latest .
-```
 
-### 2️⃣ Run the container
+### 4.2 Run the container
+
 ```bash
 docker run --rm -p 8501:8501 ehl-film-prediction:latest
 ```
-Visit → [http://localhost:8501](http://localhost:8501)
 
-Background mode:
+Now visit: http://localhost:8501
+
+To run in background:
+
 ```bash
 docker run -d --name ehl-film -p 8501:8501 ehl-film-prediction:latest
 ```
 
-### 3️⃣ Stop the container
+To stop it later:
+
 ```bash
 docker stop ehl-film
 docker rm ehl-film
 ```
 
-### 4️⃣ Optional Environment Variables
-| Variable | Default | Description |
-|-----------|----------|-------------|
-| `STREAMLIT_SERVER_HEADLESS` | `true` | Run Streamlit headless |
-| `STREAMLIT_BROWSER_GATHER_USAGE_STATS` | `false` | Disable telemetry |
-| `STREAMLIT_SERVER_PORT` | `8501` | Internal port |
-| `STREAMLIT_SERVER_ADDRESS` | `0.0.0.0` | Bind to all interfaces |
+### 4.3 Environment overrides (optional)
 
-Example:
+The Dockerfile already sets reasonable defaults for Streamlit. If you need to override the port inside the container:
+
 ```bash
-docker run -p 8080:8080 -e STREAMLIT_SERVER_PORT=8080 ehl-film-prediction:latest
+docker run --rm -p 8502:8502 -e STREAMLIT_SERVER_PORT=8502 ehl-film-prediction:latest
 ```
 
-## 🧩 Dockerfile Summary
-```dockerfile
-FROM python:3.11-slim
+## 5. Notes
 
-ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1 \
-    PIP_NO_CACHE_DIR=1 \
-    STREAMLIT_SERVER_HEADLESS=true \
-    STREAMLIT_BROWSER_GATHER_USAGE_STATS=false
+- The pages under `pages/` depend on a cleaned dataframe stored in `st.session_state["last_clean_df"]`, which is filled on the main page (`app.py`). So the normal workflow is: open the app → upload the data → go to Statistics / ML / DL pages.
+- Do not commit virtual environments, `__pycache__`, or large data files.
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-      libgomp1 tzdata && \
-    rm -rf /var/lib/apt/lists/*
+## 6. Author
 
-WORKDIR /app
-COPY requirements.txt /app/
-RUN pip install --upgrade pip && pip install -r requirements.txt
-
-COPY . /app
-
-RUN useradd -m appuser && chown -R appuser:appuser /app
-USER appuser
-
-EXPOSE 8501
-
-HEALTHCHECK --interval=30s --timeout=3s --start-period=20s \
-  CMD python -c "import socket; s=socket.socket(); s.settimeout(2); s.connect(('127.0.0.1',8501)); s.close()"
-
-CMD ["streamlit", "run", "app.py", "--server.port=8501", "--server.address=0.0.0.0"]
-```
-
-## 📦 .dockerignore
-```text
-__pycache__/
-*.pyc
-*.pyo
-*.pyd
-*.swp
-*.swo
-.env
-.venv
-venv
-.git
-.gitlab-ci.yml
-.idea
-.vscode
-.DS_Store
-*.xlsx
-*.csv
-*.zip
-```
-
-## 🧠 Key Features
-- Automated TXT/ZIP ingestion & merging  
-- Robust preprocessing (duplicate merge, imputation, scaling)  
-- Statistics & correlation heatmaps  
-- ML regression (Linear, Ridge, Lasso, RF, SVR)  
-- Order-grouped modeling for deeper insight  
-- Interactive histograms, residuals, learning curves  
-- Fully containerized for GitLab CI/CD
-
-## 🧰 Tech Stack
-**Python 3.11**, Streamlit, scikit-learn, Plotly, pandas, NumPy  
-Tested on Linux & Windows containers.
-
-## 👤 Author
-**Mehdi Aminazadeh**  
-M.Sc. Computer Science – RPTU Kaiserslautern
-Email: mehdi-amina@outlook.de
-
-## 🏁 License
-MIT License © 2025 Mehdi Aminazadeh
+- Mehdi Aminazadeh
+- M.Sc. Computer Science, RPTU Kaiserslautern
+- m.aminazadeh@edu.rptu.de
