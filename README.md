@@ -147,7 +147,7 @@ Tested on Linux & Windows containers.
 
 ## 👤 Author
 **Mehdi Aminazadeh**  
-M.Sc. Computer Science – RPTU Kaiserslautern
+M.Sc. Computer Science – RPTU Kaiserslautern <br />
 Email: mehdi-amina@outlook.de
 
 ## 🏁 License
