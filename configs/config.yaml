@@ -1,0 +1,193 @@
+# ───────────────────────────────
+# 📁 Global Data Settings
+# ───────────────────────────────
+data:
+  csv_path: preprocessed_clean.csv
+  target_column: Average Film (nm)
+  seed: 42
+
+# ───────────────────────────────
+# 🔁 Experiment Control
+# ───────────────────────────────
+experiment:
+  model_name: ft_transformer            # dnn, ft_transformer, node, tabnet,  xgboost, gradient_boosting, random_forest, extra_trees, svr, lightgbm, catboost, ridge, lasso, elasticnet, kneighbors
+  num_runs: 1
+  device: auto                   # auto|cpu|cuda (used later for deep models)
+
+# ───────────────────────────────
+# 📊 Logging Settings
+# ───────────────────────────────
+logging:
+  enable: true
+  log_to_file: experiment_log.xlsx
+  verbosity: 1
+
+# ───────────────────────────────
+# 🔧 Optuna Global Settings
+# ───────────────────────────────
+optuna:
+  n_trials: 1                 # Set 0 to disable optuna
+  kfold_splits: 10
+  direction: maximize         #  for regression we usually maximize R²; use "minimize" for losses/MAE/RMSE)
+
+  # 📉 Overfitting penalty (optional)
+  # Adjusts Optuna score if train R² ≫ val R².
+  # Formula: adjusted = val_R² − α · max(0, gap − ε)
+  use_overfit_penalty: true
+  overfit_alpha: 5.0          # penalty strength (↑ = stricter)
+  overfit_margin: 0.02        #  tolerance before penalty applies
+
+# ───────────────────────────────
+# 🛠️ Training Defaults (models may override)
+# ───────────────────────────────
+training:
+  early_stopping:
+    enabled: true
+    patience: 20
+    min_delta: 0.0001
+
+# ───────────────────────────────
+# 🧠 Per-model blocks (hyperparams under `model:`)
+# ───────────────────────────────
+models:
+
+  # ========== DNN ==========
+  dnn:
+    model:
+      hidden_dims: { choices: [[128, 64], [64, 32], [128, 64, 32]] }
+      dropout: { min: 0.2, max: 0.6 }
+      learning_rate: { min: 0.0001, max: 0.005, log: true }
+      weight_decay: { min: 0.000001, max: 0.001, log: true }
+      epochs: { min: 120, max: 250, step: 10 }
+      batch_size: { choices: [16, 32] }
+
+  # ========== TabNet ==========
+  tabnet:
+    model:
+      n_d: { choices: [16, 32, 64] }
+      n_a: { choices: [16, 32, 64] }
+      n_steps: { min: 3, max: 5, step: 1 }
+      gamma: { min: 1.0, max: 1.8 }
+      lambda_sparse: { min: 0.0001, max: 0.01, log: true }
+      learning_rate: { min: 0.0005, max: 0.01, log: true }
+      cat_emb_dim: { choices: [1] }
+      epochs: { min: 120, max: 250, step: 10 }
+      batch_size: { choices: [16, 32] }
+
+  # ========== FT-Transformer ==========
+  ft_transformer:
+    model:
+      d_token: { choices: [64, 96, 128] }
+      n_blocks: { min: 2, max: 4, step: 1 }
+      n_heads: { choices: [4, 8] }
+      attention_dropout: { min: 0.1, max: 0.3 }
+      ff_dropout: { min: 0.1, max: 0.3 }
+      residual_dropout: { min: 0.05, max: 0.2 }
+      learning_rate: { min: 0.0001, max: 0.003, log: true }
+      weight_decay: { min: 0.00001, max: 0.001, log: true }
+      epochs: { min: 120, max: 250, step: 10 }
+      batch_size: { choices: [16, 32] }
+
+  # ========== NODE ==========
+  node:
+    model:
+      layer_dim: { choices: [32, 64] }
+      num_layers: { choices: [2, 3] }
+      depth: { choices: [6, 8] }
+      input_dropout: { min: 0.000001, max: 0.08 }
+
+  # ========== XGBoost ==========
+  xgboost:
+    model:
+      learning_rate: { min: 0.01, max: 0.2, log: true }
+      max_depth: { min: 3, max: 7, step: 1 }
+      n_estimators: { min: 300, max: 900, step: 50 }
+      subsample: { min: 0.6, max: 1.0 }
+      colsample_bytree: { min: 0.6, max: 1.0 }
+      min_child_weight: { min: 1, max: 10, step: 1 }
+      gamma: { min: 0.0, max: 5.0 }
+      reg_alpha: { min: 0.0, max: 5.0 }
+      reg_lambda: { min: 0.0, max: 5.0 }
+
+  # ========== Gradient Boosting (sklearn) ==========
+  gradient_boosting:
+    model:
+      learning_rate: { min: 0.01, max: 0.2, log: true }
+      max_depth: { min: 2, max: 5, step: 1 }
+      n_estimators: { min: 200, max: 700, step: 50 }
+      subsample: { min: 0.6, max: 1.0 }
+      min_samples_split: { min: 2, max: 10, step: 1 }
+      min_samples_leaf: { min: 1, max: 5, step: 1 }
+      max_features: { min: 0.5, max: 1.0 }
+
+  # ========== Random Forest ==========
+  random_forest:
+    model:
+      n_estimators: { min: 300, max: 900, step: 100 }
+      max_depth: { min: 6, max: 20, step: 1 }
+      min_samples_split: { min: 2, max: 8, step: 1 }
+      min_samples_leaf: { min: 1, max: 4, step: 1 }
+      max_features: { min: 0.4, max: 0.9 }
+      bootstrap: { choices: [true, false] }
+      criterion: { choices: ["squared_error", "absolute_error"] }
+
+  # ========== Extra Trees ==========
+  extra_trees:
+    model:
+      n_estimators: { min: 300, max: 900, step: 100 }
+      max_depth: { min: 8, max: 24, step: 1 }
+      min_samples_split: { min: 2, max: 10, step: 1 }
+      min_samples_leaf: { min: 1, max: 3, step: 1 }
+      max_features: { min: 0.5, max: 1.0 }
+
+  # ========== SVR ==========
+  svr:
+    model:
+      C: { min: 1.0, max: 200.0, log: true }
+      epsilon: { min: 0.01, max: 1.0 }
+      gamma: { min: 0.001, max: 1.0, log: true }
+      kernel: { choices: ["rbf", "poly"] }
+
+  # ========== LightGBM ==========
+  lightgbm:
+    model:
+      learning_rate: { min: 0.005, max: 0.15, log: true }
+      n_estimators: { min: 300, max: 1200, step: 50 }
+      max_depth: { min: 3, max: 10, step: 1 }
+      num_leaves: { min: 20, max: 120, step: 5 }
+      min_child_weight: { min: 0.001, max: 10.0, log: true }
+      reg_alpha: { min: 0.0, max: 5.0 }
+      reg_lambda: { min: 0.0, max: 5.0 }
+      subsample: { min: 0.6, max: 1.0 }
+      colsample_bytree: { min: 0.6, max: 1.0 }
+
+  # ========== CatBoost ==========
+  catboost:
+    model:
+      learning_rate: { min: 0.01, max: 0.2, log: true }
+      iterations: { min: 500, max: 2000, step: 100 }
+      depth: { min: 4, max: 10, step: 1 }
+      l2_leaf_reg: { min: 1.0, max: 10.0, step: 1 }
+
+  # ========== Ridge ==========
+  ridge:
+    model:
+      alpha: { min: 0.0001, max: 10.0, log: true }
+
+  # ========== Lasso ==========
+  lasso:
+    model:
+      alpha: { min: 0.0001, max: 10.0, log: true }
+
+  # ========== ElasticNet ==========
+  elasticnet:
+    model:
+      alpha: { min: 0.0001, max: 10.0, log: true }
+      l1_ratio: { min: 0.0, max: 1.0 }
+
+  # ========== KNeighbors ==========
+  kneighbors:
+    model:
+      n_neighbors: { min: 1, max: 40, step: 1 }
+      weights: { choices: ["uniform", "distance"] }
+      p: { min: 1, max: 4, step: 1 }

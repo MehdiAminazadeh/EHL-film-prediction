@@ -1,137 +1,217 @@
-# EHL Film Prediction
+# EHL Film Prediction – Streamlit App
 
-This project is a Streamlit web application for exploring, cleaning, and modeling EHL (elastohydrodynamic lubrication) film-thickness data.
+This repository contains a Streamlit-based machine learning application for predicting **Average Film Thickness (nm)** from experimental EHL data.  
+It supports classical ML, deep learning (TabNet, NODE, FT-Transformer), and statistical visualization — all inside an interactive web interface.
 
-It provides:
-- data upload and preprocessing
-- statistical analysis (summary, correlations, distributions, outlier detection)
-- classical machine learning models for film prediction
-- order-based (grouped) modeling
-- Docker support for reproducible deployment
+---
 
-## 1. Project Structure
+## Author
+**Mehdi Aminazadeh**  
+Master of Computer Science, RPTU  
+m.aminazadeh@edu.rptu.de
 
-```text
-.
-├── app.py
-├── pages/
+---
+
+## Project Overview
+
+The project enables researchers to:
+1. Upload and preprocess raw `.txt` or `.zip` experiment data.
+2. Clean, merge, and impute missing data with **KNN**.
+3. Explore data through interactive statistics and plots.
+4. Train and compare models (classical ML & DL) to predict film thickness.
+5. Export cleaned data and model predictions.
+
+---
+
+## Project Structure
+
+```
+EHL Film Prediction/
+│
+├── .streamlit/                  # Streamlit configuration files
+├── assets/                      # Static resources (logos, icons)
+├── configs/                     # Configuration templates
+├── data/                        # Local data storage (temporary & cleaned data)
+│
+├── machine-learning-for-film-thickness-pred/   # Previous experiments / archives
+│
+├── models/                      # ML model adapters and registry
+│   ├── __init__.py
+│   ├── adapters.py
+│   ├── base.py
+│   ├── classical.py
+│   ├── dnn.py
+│   ├── dnn_adapter.py
+│   ├── ft_transformer_adapter.py
+│   ├── node_adapter.py
+│   ├── registry.py
+│   └── tabnet_adapter.py
+│
+├── nn_models/                   # Deep learning model definitions
+│   ├── ft_transformer_lib/      # FT-Transformer model
+│   │   ├── ft_transformer.py
+│   │   └── __init__.py
+│   │
+│   ├── node_lib/                # NODE model components
+│   │   ├── arch.py
+│   │   ├── data.py
+│   │   ├── nn_utils.py
+│   │   ├── odst.py
+│   │   ├── trainer.py
+│   │   ├── utils.py
+│   │   └── __init__.py
+│   │
+│   ├── tabnet_lib/              # TabNet model components
+│   │   ├── abstract_model.py
+│   │   ├── augmentations.py
+│   │   ├── callbacks.py
+│   │   ├── metrics.py
+│   │   ├── multitask_utils.py
+│   │   ├── multiclass_utils.py
+│   │   ├── pretraining.py
+│   │   ├── pretraining_utils.py
+│   │   ├── sparsemax.py
+│   │   ├── tab_model.py
+│   │   ├── tab_network.py
+│   │   ├── utils.py
+│   │   └── __init__.py
+│   │
+│   └── __init__.py
+│
+├── pages/                       # Streamlit UI pages
 │   ├── 01_statistics.py
 │   ├── 02_machine_learning.py
 │   └── 03_deep_learning.py
-├── data_processor.py
-├── preprocess.py
-├── statistics.py
-├── models.py
-├── ui_shared.py
-├── requirements.txt
+│
+├── pipelines/                   # Model training and orchestration
+│   ├── __init__.py
+│   ├── make_pipeline.py
+│   ├── train_core.py
+│   └── train_strategies/
+│       ├── train_classical.py
+│       ├── train_dnn.py
+│       ├── train_ft.py
+│       ├── train_node.py
+│       └── train_tabnet.py
+│
+├── utils/                       # Common utility modules
+│   ├── __init__.py
+│   ├── config_parser.py
+│   ├── logger.py
+│   ├── metrics.py
+│   └── optuna_search.py
+│
+├── venv/                        # Local virtual environment (ignored)
+│
+├── .dockerignore
+├── .gitignore
 ├── Dockerfile
-└── README.md
+├── requirements.txt
+├── README.md
+│
+├── app.py                        # Main Streamlit entrypoint
+├── data_processor.py             # Parsing and merging raw TXT/ZIP files
+├── preprocess.py                 # Cleaning, normalization, imputation
+├── models.py                     # Model definitions (Streamlit UI level)
+├── statistics.py                 # Statistical visualizations
+├── ui_shared.py                  # Shared UI components
+└── run_training.py               # CLI entry for model training pipeline
 ```
 
-## 2. Prerequisites
+---
 
-- Python 3.11 (recommended) or 3.10+
-- Git (if you clone the repository)
-- Docker (only if you want to run it in a container)
+## How the Application Works
 
-## 3. Run on Local Machine (with virtual environment)
+### 1. Upload & Cleaning (app.py)
+- Upload `.txt` files or `.zip` archives.
+- Files are filtered for duplicates by name or hash.
+- `data_processor.py` extracts, merges, and standardizes tables.
+- `preprocess.py` cleans and imputes data using **KNNImputer**.
+- Output is stored in `st.session_state` as `last_clean_df`.
 
-### 3.1 Get the project
+### 2. Statistics Page (`01_statistics.py`)
+- Displays summary statistics and correlation heatmaps.
+- Provides dynamic visualization with Plotly and Streamlit.
+
+### 3. Machine Learning Page (`02_machine_learning.py`)
+- Trains and compares classical models (Random Forest, XGBoost, etc.).
+- Displays performance metrics and exportable plots.
+
+### 4. Deep Learning Page (`03_deep_learning.py`)
+- Integrates neural models: TabNet, NODE, and FT-Transformer.
+- Uses modules from `nn_models` and `pipelines/train_strategies`.
+- Hyperparameter tuning via Optuna.
+
+### 5. Training Pipelines
+- Reusable training orchestration in `pipelines/train_core.py`.
+- Each strategy defines its own training wrapper.
+
+---
+
+## Run Locally with Virtual Environment
 
 ```bash
-git clone https://gitlab.com/your-namespace/ehl-film-prediction.git
-cd ehl-film-prediction
-```
+python -m venv venv
+.\venv\Scripts\Activate          # On Windows
+# or
+source venv/bin/activate         # On Linux/Mac
 
-(If you already have the folder, just go into it.)
-
-### 3.2 Create a virtual environment
-
-**Linux / macOS:**
-
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
-```
-
-**Windows (PowerShell):**
-
-```powershell
-python -m venv .venv
-.venv\Scripts\activate
-```
-
-You should now see `(.venv)` in your terminal prompt.
-
-### 3.3 Install dependencies
-
-```bash
 pip install --upgrade pip
 pip install -r requirements.txt
-```
 
-### 3.4 Start the application
-
-```bash
 streamlit run app.py
 ```
 
 Then open: http://localhost:8501
 
-If you want a different port:
+---
+
+## Run with Docker
 
 ```bash
-streamlit run app.py --server.port=8502
+docker build -t ehl-film-app .
+docker run --rm -p 8501:8501 ehl-film-app
 ```
 
-## 4. Run with Docker
+Then open: http://localhost:8501
 
-This is useful when you want a clean, reproducible run without installing Python and dependencies on the host.
+---
 
-### 4.1 Build the image
+## Dependencies
 
-Run this inside the project directory (where the Dockerfile is):
-
-```bash
-docker build -t ehl-film-prediction:latest .
+```
+streamlit>=1.38
+plotly>=5.23
+pandas>=2.2
+numpy>=1.26
+scipy>=1.14
+xlrd>=2.0.1
+pyarrow>=17.0
+joblib>=1.4
+tqdm>=4.66
+psutil>=5.9
+matplotlib>=3.9
+seaborn>=0.13
+watchdog>=4.0
+scikit-learn==1.7.1
+tqdm>=4.66.0
+optuna==4.4.0
+PyYAML==6.0.2
+xgboost>=2.0.0
+lightgbm>=4.3.0
+catboost>=1.2.2
+joblib>=1.3.2
+openpyxl==3.1.5
+category_encoders==2.8.1
+requests==2.32.4
+tensorboardX==2.6.4
 ```
 
-### 4.2 Run the container
+---
 
-```bash
-docker run --rm -p 8501:8501 ehl-film-prediction:latest
-```
+## Notes
 
-Now visit: http://localhost:8501
+- All models are modular and interchangeable.
+- The project includes automatic duplicate filtering and auto-cleaning.
+- The “Clear” button resets all uploads and cached states in Streamlit.
 
-To run in background:
-
-```bash
-docker run -d --name ehl-film -p 8501:8501 ehl-film-prediction:latest
-```
-
-To stop it later:
-
-```bash
-docker stop ehl-film
-docker rm ehl-film
-```
-
-### 4.3 Environment overrides (optional)
-
-The Dockerfile already sets reasonable defaults for Streamlit. If you need to override the port inside the container:
-
-```bash
-docker run --rm -p 8502:8502 -e STREAMLIT_SERVER_PORT=8502 ehl-film-prediction:latest
-```
-
-## 5. Notes
-
-- The pages under `pages/` depend on a cleaned dataframe stored in `st.session_state["last_clean_df"]`, which is filled on the main page (`app.py`). So the normal workflow is: open the app → upload the data → go to Statistics / ML / DL pages.
-- Do not commit virtual environments, `__pycache__`, or large data files.
-
-## 6. Author
-
-- Mehdi Aminazadeh
-- M.Sc. Computer Science, RPTU Kaiserslautern
-- m.aminazadeh@edu.rptu.de

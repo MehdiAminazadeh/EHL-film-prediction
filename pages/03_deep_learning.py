@@ -1,257 +1,254 @@
 from __future__ import annotations
+import io
+import sys
+from pathlib import Path
+from typing import Any, Dict, List
+from contextlib import redirect_stdout, redirect_stderr
 
-import re
 import numpy as np
 import pandas as pd
 import streamlit as st
-import plotly.graph_objects as go
 
-from ui_shared import topbar, suitability_report
-from sklearn.ensemble import RandomForestRegressor
-from sklearn.model_selection import train_test_split
-from sklearn.metrics import mean_absolute_error
+from ui_shared import topbar, inline_plotly_fig, find_avg_film
 
+ROOT = Path(__file__).resolve().parents[1]
+for sub in [
+    ".",
+    "utils",
+    "configs",
+    "pipelines",
+    "pipelines/train_strategies",
+    "models",
+    "nn_models",
+]:
+    p = ROOT / sub if sub != "." else ROOT
+    if p.exists():
+        s = str(p)
+        if s not in sys.path:
+            sys.path.insert(0, s)
 
-st.set_page_config(page_title="Deep Learning • EHL Film Prediction", layout="wide")
-topbar("DL", show_sidebar=True)
+from utils.config_parser import load_config, ConfigError
+from utils.logger import ExperimentLogger
+from pipelines.make_pipeline import make_pipeline
+from pipelines.train_strategies.train_dnn import train_dnn
+from pipelines.train_strategies.train_tabnet import train_tabnet
+from pipelines.train_strategies.train_ft import train_ft_transformer
+from pipelines.train_strategies.train_node import train_node
 
-st.title("Deep Learning (Order-grouped modeling)")
+st.set_page_config(page_title="Deep Learning • EHL", layout="wide")
+topbar("Deep Learning", show_sidebar=True)
 
-st.info(
-    "**Important**\n\n"
-    "Order isn’t an independent variable. It is derived from the film thickness itself "
-    "(each time the film grows by ≈ λ / 2n, the order increments).\n\n"
-    "This page trains per **Order group** (bins of 4 orders): 3–6, 7–10, 11–14, 15–18, … "
-    "The last group can contain fewer orders depending on your data. "
-    "All thresholds, predictions and suggestions are computed within the selected group."
+st.title("Deep Learning — EHL Film Prediction")
+st.caption("Runs your RegKit framework (TabNet / FT-Transformer / NODE / DNN) on the preprocessed EHL data from Home.")
+
+df_clean = st.session_state.get("last_clean_df")
+if df_clean is None or df_clean.empty:
+    st.info("No data in memory. Go to **Home** → upload TXT/ZIP → preprocessing → come back.")
+    st.stop()
+
+target_col = find_avg_film(df_clean.columns)
+if not target_col:
+    st.error("Target column (like 'Average Film (nm)') not found.")
+    st.stop()
+
+st.markdown("#### 1. Model & run setup")
+
+MODEL_OPTIONS = {
+    "TabNet (recommended)": "tabnet",
+    "FT-Transformer": "ft_transformer",
+    "NODE": "node",
+    "DNN (MLP)": "dnn",
+}
+
+c1, c2, c3 = st.columns([1.4, 1.0, 1.0])
+with c1:
+    model_label = st.selectbox("Model", list(MODEL_OPTIONS.keys()))
+    model_name = MODEL_OPTIONS[model_label]
+with c2:
+    num_runs = st.slider("Repeat runs", 1, 10, 1, 1)
+with c3:
+    show_plots = st.checkbox("Show plots", True)
+
+st.info("For more stable DL results and HP tuning, retrain ≈10× and compare MAE / RMSE / R².")
+
+if "dl_stop" not in st.session_state:
+    st.session_state["dl_stop"] = False
+
+st.markdown("#### 2. Train / evaluate")
+col_run, col_stop = st.columns([3, 1])
+with col_run:
+    run_clicked = st.button("Run Deep Learning", type="primary", use_container_width=True)
+with col_stop:
+    stop_clicked = st.button("Stop current run", use_container_width=True)
+    if stop_clicked:
+        st.session_state["dl_stop"] = True
+
+placeholder_metrics = st.empty()
+placeholder_plots = st.empty()
+placeholder_download = st.empty()
+logs_container = st.container()
+
+if not run_clicked:
+    st.stop()
+
+st.session_state["dl_stop"] = False
+
+cfg_path = ROOT / "configs" / "config.yaml"
+if not cfg_path.exists():
+    cfg_path = ROOT / "config.yaml"
+
+if not cfg_path.exists():
+    st.error("config.yaml not found (checked ./configs/ and project root).")
+    st.stop()
+
+try:
+    cfg = load_config(cfg_path)
+    cfg.switch_model(model_name)
+except ConfigError as e:
+    st.error(f"Config error: {e}")
+    st.stop()
+
+TRAINERS = {
+    "dnn": train_dnn,
+    "tabnet": train_tabnet,
+    "ft_transformer": train_ft_transformer,
+    "node": train_node,
+}
+train_fn = TRAINERS[model_name]
+
+progress = st.progress(0.0, text="Starting...")
+logger = ExperimentLogger(enabled=False, excel_path=str(ROOT / "experiment_log.xlsx"), verbosity=0)
+
+all_runs: List[Dict[str, Any]] = []
+last_best_params: Dict[str, Any] = []
+run_logs: List[str] = []
+
+for i in range(num_runs):
+    if st.session_state.get("dl_stop"):
+        progress.progress(i / max(1, num_runs), text=f"Stopped at run {i}/{num_runs}")
+        st.warning(f"Stopped by user at run {i}/{num_runs}.")
+        break
+
+    progress.progress(i / num_runs, text=f"Training run {i+1}/{num_runs} ...")
+
+    f_out = io.StringIO()
+    f_err = io.StringIO()
+    with redirect_stdout(f_out), redirect_stderr(f_err):
+        res = train_fn(cfg=cfg, df=df_clean, logger=logger)
+
+    res["__run"] = i + 1
+    all_runs.append(res)
+
+    out_txt = f_out.getvalue().strip()
+    err_txt = f_err.getvalue().strip()
+    combined = ""
+    if out_txt:
+        combined += out_txt
+    if err_txt:
+        if combined:
+            combined += "\n"
+        combined += err_txt
+    run_logs.append(combined if combined else "(no messages)")
+
+    last_best_params = res.get("Best_Params", {}) or {}
+
+progress.progress(1.0, text="Finished.")
+
+with logs_container:
+    st.markdown("#### 3. Run logs")
+    for idx, log_txt in enumerate(run_logs, start=1):
+        with st.expander(f"Run {idx} logs", expanded=(idx == len(run_logs))):
+            st.code(log_txt, language="text")
+
+if not all_runs:
+    st.warning("No runs were completed.")
+    st.stop()
+
+results_df = pd.DataFrame(all_runs)
+placeholder_metrics.markdown("#### 4. Metrics (per run)")
+placeholder_metrics.dataframe(results_df, use_container_width=True)
+
+default_model_params = {k: v for k, v in cfg.model.items() if not isinstance(v, dict)}
+if isinstance(last_best_params, dict):
+    final_params = {**default_model_params, **last_best_params}
+else:
+    final_params = default_model_params
+
+final_pipe = make_pipeline(
+    model_name=model_name,
+    model_params=final_params,
+    df_train=df_clean,
+    target_col=target_col,
+    preproc_cfg={"force_scale": True},
+    target_scaling=False,
 )
 
-df = st.session_state.get("last_clean_df")
-if df is None or df.empty:
-    st.warning("No cleaned data found. Upload/clean on **Home** first.")
-    st.stop()
+X_full = df_clean.drop(columns=[target_col])
+y_true = df_clean[target_col].values
 
+defaults = {k: v for k, v in cfg.model.items() if not isinstance(v, dict)}
+final_params = {**defaults, **last_best_params}
 
-def find_column(pattern: str) -> str | None:
-    for col in df.columns:
-        if re.search(pattern, str(col), re.I):
-            return col
-    return None
+final_pipe = make_pipeline(
+    model_name=model_name,
+    model_params=final_params,
+    df_train=df_clean,
+    target_col=target_col,
+    preproc_cfg={"force_scale": True},
+    target_scaling=False,
+)
 
+X_full = df_clean.drop(columns=[target_col])
+y_true = df_clean[target_col].values
 
-col_avg_film = find_column(r"\baverage\s*film\b")
-col_order = find_column(r"\border\b")
-col_avg_wl = find_column(r"\baverage\s*wavelength\b")
+final_pipe.fit(X_full, y_true)
+y_pred = final_pipe.predict(X_full)
 
-if col_avg_film is None or col_order is None:
-    st.error("Missing required columns: 'Average Film' and/or 'Order'.")
-    st.stop()
+pred_df = pd.DataFrame(
+    {
+        "y_true": y_true,
+        "y_pred": y_pred,
+        "model": model_name,
+    }
+)
 
-order_series = pd.to_numeric(df[col_order], errors="coerce").dropna().astype(int)
-if order_series.empty:
-    st.error("No integer Order values detected.")
-    st.stop()
+if show_plots:
+    import plotly.graph_objects as go
 
-min_order = int(order_series.min())
-max_order = int(order_series.max())
-
-start_order = 3
-if min_order < start_order:
-    offset = (min_order - start_order) % 4
-    start_order = min_order - offset
-
-order_bins: list[tuple[int, int]] = []
-current_lo = start_order
-while current_lo <= max_order:
-    current_hi = current_lo + 3
-    order_bins.append((current_lo, min(current_hi, max_order)))
-    current_lo = current_hi + 1
-
-bin_labels = [f"{lo}-{hi}" for (lo, hi) in order_bins]
-
-selected_label = st.selectbox("Select Order group", bin_labels, index=0)
-selected_index = bin_labels.index(selected_label)
-selected_lo, selected_hi = order_bins[selected_index]
-
-mask_group = (order_series >= selected_lo) & (order_series <= selected_hi)
-subset = df.loc[mask_group.values].copy()
-
-if subset.empty:
-    st.warning(f"No rows for Order group {selected_label}.")
-    st.stop()
-
-avg_wavelength = None
-if col_avg_wl and col_avg_wl in subset.columns:
-    avg_wavelength = (
-        pd.to_numeric(subset[col_avg_wl], errors="coerce")
-        .dropna()
-        .mean()
+    fig = go.Figure()
+    fig.add_scatter(x=y_true, y=y_pred, mode="markers", name="pred")
+    lo, hi = float(np.nanmin(y_true)), float(np.nanmax(y_true))
+    fig.add_trace(go.Scatter(x=[lo, hi], y=[lo, hi], mode="lines", name="ideal"))
+    fig.update_layout(
+        title="Predicted vs Actual",
+        xaxis_title="Actual",
+        yaxis_title="Predicted",
     )
+    with placeholder_plots.container():
+        inline_plotly_fig(fig, height=360)
 
-header_text = f"**Rows in group {selected_label}:** {len(subset)}"
-if avg_wavelength is not None and np.isfinite(avg_wavelength):
-    header_text += f" • **Avg Wavelength:** {avg_wavelength:.2f} nm"
-st.markdown(header_text)
+    err = y_pred - y_true
+    fig2 = go.Figure()
+    fig2.add_histogram(x=err, nbinsx=40)
+    fig2.update_layout(title="Residuals", xaxis_title="error", yaxis_title="count")
+    inline_plotly_fig(fig2, height=300)
 
-y_series = pd.to_numeric(subset[col_avg_film], errors="coerce")
-subset = subset.loc[y_series.notna()].copy()
-y_series = y_series.loc[y_series.notna()]
+buf_m = io.StringIO()
+results_df.to_csv(buf_m, index=False)
+placeholder_download.download_button(
+    "Download metrics CSV",
+    buf_m.getvalue().encode("utf-8"),
+    "dl_metrics.csv",
+    "text/csv",
+)
 
-if len(y_series) == 0:
-    st.error("No valid 'Average Film' values in this order group.")
-    st.stop()
+buf_p = io.StringIO()
+pred_df.to_csv(buf_p, index=False)
+st.download_button(
+    "Download predictions CSV",
+    buf_p.getvalue().encode("utf-8"),
+    "dl_predictions.csv",
+    "text/csv",
+)
 
-group_threshold = float(y_series.mean())
-
-numeric_subset = subset.select_dtypes(include=[np.number]).copy()
-
-drop_in_features: list[str] = []
-for col in numeric_subset.columns:
-    col_lower = str(col).lower()
-    if "average film" in col_lower:
-        drop_in_features.append(col)
-    elif "order" in col_lower:
-        drop_in_features.append(col)
-    elif "average wavelength" in col_lower:
-        drop_in_features.append(col)
-    elif "lube ref index" in col_lower:
-        drop_in_features.append(col)
-
-feature_df = numeric_subset.drop(columns=drop_in_features, errors="ignore")
-
-if feature_df.shape[1] == 0:
-    st.error("No usable features after excluding target/order/wavelength.")
-    st.stop()
-
-left_col, right_col = st.columns([1.25, 1.75], gap="large")
-
-with left_col:
-    st.subheader(f"What-if simulator (Orders {selected_label})")
-    slider_values: dict[str, float] = {}
-    at_least_one_slider = False
-
-    for feature_name in feature_df.columns:
-        series_values = pd.to_numeric(subset[feature_name], errors="coerce").dropna()
-        if series_values.empty:
-            continue
-
-        low = float(np.nanpercentile(series_values, 1))
-        high = float(np.nanpercentile(series_values, 99))
-        median = float(np.nanmedian(series_values))
-
-        if not np.isfinite(low) or not np.isfinite(high) or low >= high:
-            st.caption(
-                f"• `{feature_name}` cannot be adjusted for this order group (no variation)."
-            )
-            continue
-
-        slider_values[feature_name] = st.slider(
-            feature_name,
-            low,
-            high,
-            value=median,
-        )
-        at_least_one_slider = True
-
-    if not at_least_one_slider:
-        st.error(
-            "Dataset is not valid for this selected order range. "
-            "Try a lower order range or upload richer data."
-        )
-        st.stop()
-
-with right_col:
-    st.subheader("Train group regressor & predict")
-
-    X = feature_df.values
-    y = y_series.values
-
-    regressor = RandomForestRegressor(
-        n_estimators=400,
-        random_state=42,
-    )
-
-    if len(y) < 8:
-        regressor.fit(X, y)
-        y_hat_train = regressor.predict(X)
-        mae_resub = float(np.mean(np.abs(y - y_hat_train)))
-        st.caption(
-            f"Train size: {len(y)} (tiny). Resubstitution MAE ≈ {mae_resub:.3f} nm."
-        )
-    else:
-        X_train, X_test, y_train, y_test = train_test_split(
-            X,
-            y,
-            test_size=0.2,
-            random_state=42,
-        )
-        regressor.fit(X_train, y_train)
-        y_pred_test = regressor.predict(X_test)
-        mae_holdout = mean_absolute_error(y_test, y_pred_test)
-        st.caption(
-            f"Train size: {len(y_train)}, Test size: {len(y_test)}. "
-            f"Holdout MAE ≈ {mae_holdout:.3f} nm."
-        )
-
-    feature_names = list(feature_df.columns)
-
-    prediction_row: list[float] = []
-    for name in feature_names:
-        if name in slider_values:
-            prediction_row.append(slider_values[name])
-        else:
-            col_vals = pd.to_numeric(subset[name], errors="coerce").dropna()
-            if len(col_vals):
-                prediction_row.append(float(np.nanmedian(col_vals)))
-            else:
-                prediction_row.append(0.0)
-
-    prediction_input = np.array([prediction_row], dtype=float)
-    predicted_film = float(regressor.predict(prediction_input)[0])
-
-    prediction_is_ok = predicted_film >= group_threshold
-
-    st.markdown(
-        f"**Predicted Average Film (nm):** "
-        f"<span style='background:#153e27;color:#b7ffd1;padding:2px 6px;border-radius:6px'>{predicted_film:,.4f}</span> "
-        f"&nbsp;|&nbsp; **Threshold:** "
-        f"<span style='background:#16361f;color:#b6f5bf;padding:2px 6px;border-radius:6px'>{group_threshold:,.4f}</span>",
-        unsafe_allow_html=True,
-    )
-
-    if not np.isnan(group_threshold):
-        if prediction_is_ok:
-            st.success("Prediction is at or above the threshold.")
-        else:
-            st.warning("Prediction is below the threshold. To increase Average Film (nm):")
-
-    corr_df = subset[feature_df.columns.tolist() + [col_avg_film]].corr(
-        method="spearman"
-    )
-    corr_series = corr_df[col_avg_film].drop(col_avg_film)
-
-    positive_features = corr_series[corr_series > 0].sort_values(
-        ascending=False
-    ).index.tolist()
-    negative_features = corr_series[corr_series < 0].sort_values().index.tolist()
-
-    if not prediction_is_ok:
-        if positive_features:
-            st.markdown("**Increase:** " + ", ".join(positive_features))
-        if negative_features:
-            st.markdown("**Decrease:** " + ", ".join(negative_features))
-
-    bar_fig = go.Figure()
-    bar_fig.add_bar(
-        x=["Predicted", "Threshold"],
-        y=[predicted_film, group_threshold],
-    )
-    bar_fig.update_layout(
-        template="plotly_dark",
-        height=260,
-        title=f"Orders {selected_label}: Predicted vs Threshold (nm)",
-    )
-    st.plotly_chart(bar_fig, use_container_width=True)
-
-st.divider()
-st.caption(suitability_report(subset.select_dtypes(include=[np.number])))
+st.success("Done. You can change model or increase runs now.")

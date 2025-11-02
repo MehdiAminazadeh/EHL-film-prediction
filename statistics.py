@@ -59,7 +59,7 @@ def render_statistics_panel(df_clean: pd.DataFrame):
             "Outlier Diagnostics",
         ]
     )
-
+    #tab 1
     with tabs[0]:
         st.caption("Descriptive statistics with coverage.")
         percentiles = [0.05, 0.25, 0.5, 0.75, 0.95]
@@ -70,6 +70,8 @@ def render_statistics_panel(df_clean: pd.DataFrame):
         st.dataframe(output, use_container_width=True, height=420)
         _download_button(output, "Download summary CSV", "summary_stats.csv")
 
+    
+    #tab 2
     with tabs[1]:
         col_left, col_right = st.columns([1.0, 1.0], gap="large")
 
@@ -79,6 +81,10 @@ def render_statistics_panel(df_clean: pd.DataFrame):
             sort_abs = st.checkbox("Sort by |corr|", True)
 
         correlations = numeric_df.corr(method=method)
+
+        # dynamic, square heatmap
+        n_features = len(correlations.columns)
+        base_size = max(400, 40 * n_features)
 
         heatmap_fig = go.Figure(
             data=go.Heatmap(
@@ -92,14 +98,19 @@ def render_statistics_panel(df_clean: pd.DataFrame):
         )
         heatmap_fig.update_layout(
             template=PX_THEME,
-            height=300,
             title=f"Correlation heatmap ({method})",
+            width=base_size,
+            height=base_size,
             xaxis_title="Features",
             yaxis_title="Features",
+            xaxis=dict(tickangle=45, side="bottom"),
+            yaxis=dict(autorange="reversed"),
+            margin=dict(l=70, r=40, t=60, b=80),
         )
 
         with col_right:
-            st.plotly_chart(heatmap_fig, use_container_width=True)
+           
+            st.plotly_chart(heatmap_fig, use_container_width=False)
 
         if target and target != "(none)":
             series = correlations[target].drop(labels=[target])
@@ -111,6 +122,7 @@ def render_statistics_panel(df_clean: pd.DataFrame):
             st.dataframe(series.to_frame("corr").style.format(precision=3), use_container_width=True, height=300)
             _download_button(series.to_frame("corr"), "Download correlations CSV", f"corr_vs_{target}.csv")
 
+    #tab 3
     with tabs[2]:
         st.markdown("#### Single distribution")
         main_column = st.selectbox("Column", list(numeric_df.columns), key="dist_main_col")
@@ -182,6 +194,7 @@ def render_statistics_panel(df_clean: pd.DataFrame):
         else:
             st.caption("Select 1 or more columns above to overlay them under the main plot.")
 
+    #tab 4
     with tabs[3]:
         method = st.radio("Method", ["Z-score", "IQR"], horizontal=True)
         column_to_check = st.selectbox("Column", list(numeric_df.columns), key="outlier_col")

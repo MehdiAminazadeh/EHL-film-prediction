@@ -1,103 +1,118 @@
-import io
-import time
 import re
+import time
+import hashlib
 
 import pandas as pd
 import streamlit as st
 
+from styling import show_glowing_logo
 from ui_shared import topbar
 from data_processor import process_files, extract_supported_from_zip
 from preprocess import preprocess_dataframe
 
 
 st.set_page_config(page_title="Home • EHL Film Prediction", layout="wide")
-
 topbar("Home", show_sidebar=True)
+show_glowing_logo("assets/megt_logo.jpg")
 
-st.markdown('<div class="wrap">', unsafe_allow_html=True)
+
 st.title("Home")
-st.caption(
-    "Upload TXT (or a ZIP of TXT files). We merge and auto-clean so Statistics, ML and DL pages can use the data immediately."
-)
+st.caption("Upload TXT (or ZIP) → merge & normalize to 15-column EHL dataset for analysis and ML.")
 
 if "uploader_ver" not in st.session_state:
     st.session_state["uploader_ver"] = 0
+if "last_df" not in st.session_state:
+    st.session_state["last_df"] = None
+if "last_clean_df" not in st.session_state:
+    st.session_state["last_clean_df"] = None
+if "last_clean_report" not in st.session_state:
+    st.session_state["last_clean_report"] = None
+if "uploaded_hashes" not in st.session_state:
+    st.session_state["uploaded_hashes"] = set()
 
 upload_mode = st.radio("Upload mode", ["Files (.txt)", "Folder (.zip)"], horizontal=True)
 
-col_upload, col_clear = st.columns([3, 1])
+col_upload, col_clear = st.columns([4, 1])
 
 with col_upload:
     uploads = st.file_uploader(
         "Upload files",
         type=["txt", "zip"],
-        accept_multiple_files=True if upload_mode.startswith("Files") else False,
+        accept_multiple_files=upload_mode.startswith("Files"),
         key=f"uploader_home_{st.session_state['uploader_ver']}",
     )
 
 with col_clear:
     clear_clicked = st.button("Clear", use_container_width=True)
     if clear_clicked:
-        st.session_state.clear()
-        st.session_state["uploader_ver"] = st.session_state.get("uploader_ver", 0) + 1
+        st.session_state["last_df"] = None
+        st.session_state["last_clean_df"] = None
+        st.session_state["last_clean_report"] = None
+        st.session_state["uploaded_hashes"] = set()
+        st.session_state["uploader_ver"] += 1
         st.rerun()
 
 
-def is_safe_txt_name(name: str) -> bool:
-    pattern = r"^[\w ()\-\.\[\]]+\.txt$"
-    return name.lower().endswith(".txt") and re.match(pattern, name, re.IGNORECASE)
+def valid_name(name: str) -> bool:
+    return bool(re.match(r"^[\w ()\-\.\[\]]+\.txt$", name or "", re.I))
+
+
+def file_digest(data: bytes) -> str:
+    return hashlib.sha1(data).hexdigest()
 
 
 if uploads:
+    new_payloads: list[tuple[str, bytes]] = []
+
     if upload_mode.startswith("Files"):
-        file_payloads = []
         for uploaded in uploads:
-            if not is_safe_txt_name(uploaded.name):
-                st.error(f"Unsupported file name/type (TXT only): {uploaded.name}")
-                st.stop()
-            file_payloads.append((uploaded.name, uploaded.read()))
+            if not valid_name(uploaded.name):
+                continue
+
+            content = uploaded.read()
+            digest = file_digest(content)
+
+            if uploaded.name in st.session_state["uploaded_hashes"]:
+                continue
+            if digest in st.session_state["uploaded_hashes"]:
+                continue
+
+            new_payloads.append((uploaded.name, content))
+            st.session_state["uploaded_hashes"].add(uploaded.name)
+            st.session_state["uploaded_hashes"].add(digest)
     else:
-        zip_bytes = uploads.read()
-        file_payloads = extract_supported_from_zip(zip_bytes)
-        if not file_payloads:
-            st.error("No valid .txt found in the ZIP.")
-            st.stop()
+        extracted = extract_supported_from_zip(uploads.read())
+        for name, content in extracted:
+            digest = file_digest(content)
+            if name in st.session_state["uploaded_hashes"]:
+                continue
+            if digest in st.session_state["uploaded_hashes"]:
+                continue
+            new_payloads.append((name, content))
+            st.session_state["uploaded_hashes"].add(name)
+            st.session_state["uploaded_hashes"].add(digest)
 
-    start_time = time.time()
-    try:
-        merged_df = process_files(file_payloads, parallel=True)
-    except Exception as exc:
-        st.error(f"Failed while parsing uploaded files. Details:\n\n{exc}")
-        st.stop()
+    if not new_payloads:
+        st.warning("No new (non-duplicate) TXT files found.")
+    else:
+        start = time.time()
+        merged_df = process_files(new_payloads)
+        st.session_state["last_df"] = merged_df
 
-    st.session_state["last_df"] = merged_df
-
-    if merged_df is not None and not merged_df.empty:
-        clean_df, clean_report = preprocess_dataframe(merged_df, numeric_threshold=0.80)
+        clean_df, clean_report = preprocess_dataframe(merged_df)
         st.session_state["last_clean_df"] = clean_df
         st.session_state["last_clean_report"] = clean_report
-        elapsed = time.time() - start_time
-        st.success(f"Uploaded {len(file_payloads)} TXT file(s), merged and auto-cleaned in {elapsed:.2f}s.")
-    else:
-        st.warning("No valid data extracted from the TXT files.")
 
-raw_df = st.session_state.get("last_df")
+        elapsed = time.time() - start
+        st.success(f"Processed {len(new_payloads)} new file(s) in {elapsed:.2f}s")
 
-if raw_df is not None and not raw_df.empty:
-    col_left, col_right = st.columns([1, 1.4], gap="large")
+clean_df = st.session_state.get("last_clean_df")
 
-    with col_left:
-        st.markdown("#### Clean")
-        st.caption("Auto-clean is already applied. Click to recompute if needed.")
-        reclean_clicked = st.button("Re-clean data", use_container_width=True)
-        if reclean_clicked:
-            reclean_df, reclean_report = preprocess_dataframe(raw_df, numeric_threshold=0.80)
-            st.session_state["last_clean_df"] = reclean_df
-            st.session_state["last_clean_report"] = reclean_report
-            st.success("Re-cleaned.")
+if clean_df is not None and not clean_df.empty:
+    st.markdown("### Preview (Cleaned 15-column Dataset)")
+    st.dataframe(clean_df.head(40), use_container_width=True, height=360)
 
-    with col_right:
-        st.markdown('<div class="card"><h4>Preview</h4></div>', unsafe_allow_html=True)
-        st.dataframe(raw_df.head(10), use_container_width=True, height=240)
-
-st.markdown("</div>", unsafe_allow_html=True)
+    report = st.session_state.get("last_clean_report")
+    if report:
+        with st.expander("Cleaning report"):
+            st.code(report, language="text")
